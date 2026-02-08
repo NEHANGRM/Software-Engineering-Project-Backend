@@ -30,11 +30,17 @@ const authRoutes = require('./routes/auth');
 const taskRoutes = require('./routes/tasks');
 const aiRoutes = require('./routes/ai');
 const eventRoutes = require('./routes/events');
+const timetableRoutes = require('./routes/timetable');
+const attendanceRoutes = require('./routes/attendance');
+const categoryRoutes = require('./routes/categories');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/tasks', taskRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/events', eventRoutes);
+app.use('/api/timetable', timetableRoutes);
+app.use('/api/attendance', attendanceRoutes);
+app.use('/api/categories', categoryRoutes);
 
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);

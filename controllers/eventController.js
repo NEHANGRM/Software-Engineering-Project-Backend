@@ -19,9 +19,24 @@ exports.createEvent = async (req, res) => {
     }
 };
 
+exports.updateEvent = async (req, res) => {
+    try {
+        const event = await Event.findOneAndUpdate(
+            { _id: req.params.id, userId: req.user._id },
+            req.body,
+            { new: true }
+        );
+        if (!event) return res.status(404).json({ message: "Event not found" });
+        res.json(event);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
 exports.deleteEvent = async (req, res) => {
     try {
-        await Event.findByIdAndDelete(req.params.id);
+        const event = await Event.findOneAndDelete({ _id: req.params.id, userId: req.user._id });
+        if (!event) return res.status(404).json({ message: "Event not found" });
         res.json({ message: "Event deleted" });
     } catch (err) {
         res.status(500).json({ error: err.message });

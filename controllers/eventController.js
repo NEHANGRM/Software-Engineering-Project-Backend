@@ -11,30 +11,61 @@ exports.getEvents = async (req, res) => {
 
 exports.createEvent = async (req, res) => {
     try {
-        const { title, type, startDate, endDate, location, description, isCompleted, priority, estimatedDuration, isImportant, reminders, category, classification } = req.body;
+        // Destructure using keys sent by Frontend (AddEventModal.jsx)
+        // Frontend sends: title, type, category, startTime, endTime, location, notes, priority, important, reminders
+        const {
+            title,
+            type,
+            classification,
+            category,
+            startTime,
+            startDate, // fallback
+            endTime,
+            endDate,   // fallback 
+            location,
+            notes,
+            description, // fallback
+            priority,
+            important,
+            isImportant, // fallback
+            reminders,
+            estimatedDuration,
+            isCompleted
+        } = req.body;
 
         // Handle both 'type' and 'classification' for backward/forward compatibility
         const eventType = classification || type || 'event';
+
+        // Handle field aliases (Frontend -> Backend Model)
+        const eventStart = startTime || startDate;
+        const eventEnd = endTime || endDate;
+        const eventNotes = notes || description;
+        const eventImportant = important !== undefined ? important : (isImportant !== undefined ? isImportant : false);
+
+        if (!eventStart) {
+            return res.status(400).json({ error: "Start time is required" });
+        }
 
         const newEvent = new Event({
             userId: req.user._id,
             title,
             classification: eventType,
             type: eventType, // Keep both populated for safety
-            startTime: startDate,
-            endTime: endDate,
+            startTime: eventStart,
+            endTime: eventEnd,
             location,
-            notes: description,
+            notes: eventNotes,
             isCompleted: isCompleted || false,
             priority: priority || 'medium',
             estimatedDuration,
-            isImportant: isImportant || false,
+            isImportant: eventImportant,
             reminders: reminders || [],
             category: category
         });
         await newEvent.save();
         res.status(201).json(newEvent);
     } catch (err) {
+        console.error("Create Event Error:", err);
         res.status(500).json({ error: err.message });
     }
 };

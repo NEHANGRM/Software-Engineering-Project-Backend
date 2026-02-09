@@ -11,9 +11,29 @@ exports.getEvents = async (req, res) => {
 
 exports.createEvent = async (req, res) => {
     try {
-        const event = new Event({ ...req.body, userId: req.user._id });
-        await event.save();
-        res.status(201).json(event);
+        const { title, type, startDate, endDate, location, description, isCompleted, priority, estimatedDuration, isImportant, reminders, category, classification } = req.body;
+
+        // Handle both 'type' and 'classification' for backward/forward compatibility
+        const eventType = classification || type || 'event';
+
+        const newEvent = new Event({
+            userId: req.user._id,
+            title,
+            classification: eventType,
+            type: eventType, // Keep both populated for safety
+            startTime: startDate,
+            endTime: endDate,
+            location,
+            notes: description,
+            isCompleted: isCompleted || false,
+            priority: priority || 'medium',
+            estimatedDuration,
+            isImportant: isImportant || false,
+            reminders: reminders || [],
+            category: category
+        });
+        await newEvent.save();
+        res.status(201).json(newEvent);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

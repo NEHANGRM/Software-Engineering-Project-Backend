@@ -3,16 +3,15 @@ const mongoose = require('mongoose');
 const EventSchema = new mongoose.Schema({
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     title: { type: String, required: true },
-<<<<<<< HEAD
-    type: {
+    // Unified 'classification' (formerly 'type') to match Mobile App
+    classification: {
         type: String,
         enum: ['exam', 'lab', 'lecture', 'submission', 'note', 'event', 'class', 'assignment', 'meeting', 'personal', 'other'],
-        default: 'event'
+        default: 'event', // Default for legacy compatibility
+        required: true
     },
-=======
-    classification: { type: String, required: true }, // 'class', 'exam', 'meeting', etc.
+    type: { type: String }, // Legacy field, optional now
     category: { type: String }, // Category ID or Name
->>>>>>> 6158b10430d884491b82828fc72af39cabc7e9f3
     startTime: { type: Date, required: true },
     endTime: { type: Date },
     location: { type: String },
@@ -30,13 +29,9 @@ const EventSchema = new mongoose.Schema({
     priority: { type: String, default: 'medium' },
     estimatedDuration: { type: String },
     isImportant: { type: Boolean, default: false },
-<<<<<<< HEAD
-    isCompleted: { type: Boolean, default: false }, // Added for task completion
-=======
     reminders: [{ type: Date }],
     color: { type: String },
     metadata: { type: Map, of: String }, // Flexible key-value pairs
->>>>>>> 6158b10430d884491b82828fc72af39cabc7e9f3
     createdAt: { type: Date, default: Date.now }
 });
 

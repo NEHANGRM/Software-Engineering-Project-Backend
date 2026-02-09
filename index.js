@@ -32,10 +32,7 @@ const aiRoutes = require('./routes/ai');
 const eventRoutes = require('./routes/events');
 const timetableRoutes = require('./routes/timetable');
 const attendanceRoutes = require('./routes/attendance');
-<<<<<<< HEAD
-=======
 const categoryRoutes = require('./routes/categories');
->>>>>>> 6158b10430d884491b82828fc72af39cabc7e9f3
 
 app.use('/api/auth', authRoutes);
 app.use('/api/tasks', taskRoutes);
@@ -43,10 +40,7 @@ app.use('/api/ai', aiRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/timetable', timetableRoutes);
 app.use('/api/attendance', attendanceRoutes);
-<<<<<<< HEAD
-=======
 app.use('/api/categories', categoryRoutes);
->>>>>>> 6158b10430d884491b82828fc72af39cabc7e9f3
 
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);

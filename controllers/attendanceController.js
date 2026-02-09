@@ -2,8 +2,8 @@ const AttendanceRecord = require('../models/AttendanceRecord');
 
 exports.getAttendance = async (req, res) => {
     try {
-        const attendance = await AttendanceRecord.find({ userId: req.user._id });
-        res.json(attendance);
+        const records = await AttendanceRecord.find({ userId: req.user._id });
+        res.json(records);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -11,9 +11,20 @@ exports.getAttendance = async (req, res) => {
 
 exports.markAttendance = async (req, res) => {
     try {
-        const record = new AttendanceRecord({ ...req.body, userId: req.user._id });
-        await record.save();
-        res.status(201).json(record);
+        const { courseName, date, status } = req.body;
+
+        // Upsert (Update if exists, else Insert) to prevent duplicates for same day
+        const record = await AttendanceRecord.findOneAndUpdate(
+            {
+                userId: req.user._id,
+                courseName: courseName,
+                date: new Date(date)
+            },
+            { ...req.body, userId: req.user._id },
+            { new: true, upsert: true, setDefaultsOnInsert: true }
+        );
+
+        res.status(200).json(record);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -21,21 +32,38 @@ exports.markAttendance = async (req, res) => {
 
 exports.deleteAttendance = async (req, res) => {
     try {
-        await AttendanceRecord.findByIdAndDelete(req.params.id);
+        const record = await AttendanceRecord.findOneAndDelete({ _id: req.params.id, userId: req.user._id });
+        if (!record) return res.status(404).json({ message: "Record not found" });
         res.json({ message: "Record deleted" });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 };
 
-exports.getStats = async (req, res) => {
+exports.getAttendanceStats = async (req, res) => {
     try {
-        const attendance = await AttendanceRecord.find({ userId: req.user._id });
-        // Calculate stats logic here or just return raw data for frontend to calculate
-        // Frontend attendanceService.js seems to expect raw data mainly or specific stats endpoint?
-        // Let's check service. If it calls /stats, we provide it.
-        // Assuming simple aggregation for now if needed, but getAttendance covers raw data.
-        res.json(attendance); // Placeholder if specific stats endpoint needed
+        const records = await AttendanceRecord.find({ userId: req.user._id });
+
+        const stats = {};
+
+        records.forEach(record => {
+            if (!stats[record.courseName]) {
+                stats[record.courseName] = {
+                    total: 0,
+                    present: 0,
+                    absent: 0,
+                    late: 0,
+                    excused: 0
+                };
+            }
+
+            if (record.status !== 'cancelled') {
+                stats[record.courseName].total++;
+                stats[record.courseName][record.status]++;
+            }
+        });
+
+        res.json(stats);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

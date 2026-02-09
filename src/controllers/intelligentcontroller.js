@@ -3,9 +3,14 @@ const Event = require("../models/Event");
 /* ---------------- HELPER ---------------- */
 const parseDurationToMinutes = (duration) => {
   if (!duration) return 0;
-  if (duration.includes("h")) return parseInt(duration) * 60;
-  if (duration.includes("m")) return parseInt(duration);
-  return 0;
+  const str = String(duration).toLowerCase();
+
+  if (str.includes("h")) return parseFloat(str) * 60;
+  if (str.includes("m")) return parseFloat(str);
+
+  // Default to minutes if just a number
+  const val = parseFloat(str);
+  return isNaN(val) ? 0 : val;
 };
 
 /* =====================================================

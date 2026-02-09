@@ -75,6 +75,9 @@ const eventSchema = new mongoose.Schema({
 
   estimatedDuration: String,
 
+  // Track how long the user ACTUALLY spent (for behavior analysis)
+  actualDuration: String,
+
   // Metadata for sync/timetable links
   metadata: {
     type: Map,

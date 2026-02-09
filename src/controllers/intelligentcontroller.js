@@ -235,122 +235,124 @@ exports.analyzeBurnout = async (req, res) => {
 /* =====================================================
    5️⃣ STUDY SESSION SCHEDULER (AI)
 ===================================================== */
+/* =====================================================
+   5️⃣ STUDY SESSION SCHEDULER (AI POWERED)
+===================================================== */
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+
 exports.suggestStudySessions = async (req, res) => {
   try {
     const { userId } = req.params;
-    const date = req.query.date ? new Date(req.query.date) : new Date();
 
-    const startOfDay = new Date(date);
-    startOfDay.setHours(6, 0, 0, 0);
-
-    const endOfDay = new Date(date);
-    endOfDay.setHours(22, 0, 0, 0);
-
-    const now = new Date();
-
-    // We only care about today/future for scheduling slots
-    // but looking at 'missed' tasks from the past is crucial.
-
-    /* ---------------- GET TASKS ---------------- */
-
-    // 1️⃣ MISSED TASKS (Reschedule Priority)
-    // Tasks whose DEADLINE passed without completion
-    const missedTasks = await Event.find({
-      userId,
-      isCompleted: false,
-      classification: { $in: ["assignment", "exam"] },
-      // Check if deadline (endTime) is before NOW
-      $or: [
-        { endTime: { $lt: now } },
-        { endTime: null, startTime: { $lt: now } } // fallback if no endTime
-      ]
-    });
-
-    // 2️⃣ NORMAL UPCOMING TASKS
-    const upcomingTasks = await Event.find({
-      userId,
-      isCompleted: false,
-      classification: { $in: ["assignment", "exam"] },
-      // Deadline is in future
-      $or: [
-        { endTime: { $gte: now } },
-        { endTime: null, startTime: { $gte: now } }
-      ]
-    }).sort({ isImportant: -1, priority: -1, startTime: 1 });
-
-    // Merge: Missed first (for rescheduling)
-    const tasks = [...missedTasks, ...upcomingTasks];
-
-    /* ---------------- EVENTS (Generic Constraints) ---------------- */
-    // Fetch fixed events that block time (classes, meetings, other)
-    const events = await Event.find({
-      userId,
-      classification: { $in: ["class", "meeting", "other"] },
-      startTime: { $lte: endOfDay },
-      endTime: { $gte: startOfDay }
-    });
-
-    let freeSlots = [{ start: startOfDay, end: endOfDay }];
-
-    // Remove event time from free slots
-    events.forEach(e => {
-      freeSlots = freeSlots.flatMap(slot => {
-        if (slot.end <= e.startTime || slot.start >= e.endTime) return [slot];
-
-        const slots = [];
-        if (slot.start < e.startTime) slots.push({ start: slot.start, end: e.startTime });
-        if (slot.end > e.endTime) slots.push({ start: e.endTime, end: slot.end });
-        return slots;
+    // Check if API key is configured
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(500).json({
+        message: "Gemini API Key is missing. Please add GEMINI_API_KEY to your .env file."
       });
-    });
-
-    const sessions = [];
-
-    /* ---------------- SCHEDULING ---------------- */
-    for (const task of tasks) {
-      let remaining = parseDurationToMinutes(task.estimatedDuration || "1h"); // Default 1h if missing
-
-      const deadline = new Date(task.endTime || task.startTime);
-      const isMissed = deadline < now;
-
-      for (const slot of freeSlots) {
-        const slotMinutes = (slot.end - slot.start) / 60000;
-        if (remaining <= 0 || slotMinutes <= 0) continue;
-
-        const alloc = Math.min(slotMinutes, remaining);
-
-        sessions.push({
-          task: task.title,
-          category: task.category,
-          startTime: slot.start.toTimeString().slice(0, 5),
-          endTime: new Date(slot.start.getTime() + alloc * 60000)
-            .toTimeString().slice(0, 5),
-          type: isMissed ? "Rescheduled (Missed)" : "Study Session",
-          isRescheduled: isMissed
-        });
-
-        slot.start = new Date(slot.start.getTime() + alloc * 60000);
-        remaining -= alloc;
-      }
-
-      if (remaining > 0) {
-        sessions.push({
-          task: task.title,
-          note: isMissed
-            ? "CRITICALLY OVERDUE: No free slots to reschedule today!"
-            : "Not enough free time today",
-          type: "Unscheduled",
-          isRescheduled: isMissed
-        });
-      }
     }
 
-    res.json({
-      date: startOfDay.toISOString().split('T')[0],
-      sessions
-    });
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
+
+    const date = req.query.date ? new Date(req.query.date) : new Date();
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    // Helper to format date to readable time (IST)
+    const formatTime = (date) => {
+      return new Date(date).toLocaleTimeString("en-IN", {
+        timeZone: "Asia/Kolkata",
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      });
+    };
+
+    // Fetch active tasks (assignments/exams)
+    const tasksRaw = await Event.find({
+      userId,
+      classification: { $in: ["assignment", "exam"] },
+      isCompleted: false,
+      $or: [
+        { endTime: { $gte: new Date() } }, // Future deadline
+        { endTime: null }
+      ]
+    }).select("title classification priority estimatedDuration endTime");
+
+    const tasks = tasksRaw.map(t => ({
+      title: t.title,
+      priority: t.priority,
+      duration: t.estimatedDuration,
+      deadline: t.endTime ? t.endTime.toDateString() + " " + formatTime(t.endTime) : "None"
+    }));
+
+    // Fetch fixed events (classes/meetings) to identify busy times
+    const fixedEventsRaw = await Event.find({
+      userId,
+      classification: { $in: ["class", "meeting", "other"] },
+      startTime: { $gte: startOfDay, $lte: endOfDay }
+    }).select("title startTime endTime");
+
+    const fixedEvents = fixedEventsRaw.map(e => ({
+      title: e.title,
+      start: formatTime(e.startTime),
+      end: formatTime(e.endTime)
+    }));
+
+    // Construct the prompt for AI
+    const prompt = `
+      You are an intelligent academic planner. Create a daily study plan for a student based on their tasks and fixed schedule.
+      
+      Current Date: ${date.toDateString()}
+      
+      Fixed Events (Users CANNOT study during these times):
+      ${JSON.stringify(fixedEvents)}
+      
+      Pending Tasks (Prioritize based on deadline and priority):
+      ${JSON.stringify(tasks)}
+      
+      Generate a structured schedule for the day (08:00 to 22:00).
+      - IMPORTANT: Do NOT schedule any study sessions during 'Fixed Events'.
+      - Allocate time for fixed events exactly as they are listed.
+      - Fill free gaps with study sessions.
+      - Include short breaks.
+      - If a task has a near deadline, prioritize it.
+      
+      Return the response in strictly valid JSON format with this structure:
+      {
+        "date": "YYYY-MM-DD",
+        "sessions": [
+          { 
+            "task": "Task or Event Name", 
+            "startTime": "HH:mm", 
+            "endTime": "HH:mm", 
+            "type": "study/class/break/other", 
+            "note": "Strategy or focus" 
+          }
+        ],
+        "summary": "Brief summary of the plan"
+      }
+      Do not include any markdown formatting (like \`\`\`json). Just return the raw JSON string.
+    `;
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+
+    // Clean up if AI wraps in markdown code blocks
+    const cleanJson = text.replace(/```json/g, '').replace(/```/g, '').trim();
+
+    const studyPlan = JSON.parse(cleanJson);
+
+    res.json(studyPlan);
 
   } catch (err) {
-    res.status(400).json({ message: err.message });
+    console.error("AI Study Plan Error:", err);
+    if (err.response) {
+      console.error("Error Details:", await err.response.text());
+    }
+    res.status(500).json({ message: "Failed to generate study plan", error: err.message });
   }
 };

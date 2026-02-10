@@ -38,7 +38,16 @@ exports.login = async (req, res) => {
         if (!isMatch) return res.status(400).json({ message: "Invalid credentials" });
 
         const token = jwt.sign({ _id: user._id }, process.env.JWT_SECRET);
-        res.json({ token, user: { id: user._id, name: user.name, email: user.email } });
+        res.json({ token, user: { id: user._id, name: user.name, email: user.email, role: 'student' } });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+exports.getMe = async (req, res) => {
+    try {
+        const user = await User.findById(req.user._id).select('-password');
+        res.json(user);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

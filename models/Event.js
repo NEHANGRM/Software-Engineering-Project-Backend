@@ -3,7 +3,14 @@ const mongoose = require('mongoose');
 const EventSchema = new mongoose.Schema({
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     title: { type: String, required: true },
-    classification: { type: String, required: true }, // 'class', 'exam', 'meeting', etc.
+    // Unified 'classification' (formerly 'type') to match Mobile App
+    classification: {
+        type: String,
+        enum: ['exam', 'lab', 'lecture', 'submission', 'note', 'event', 'class', 'assignment', 'meeting', 'personal', 'other'],
+        default: 'event', // Default for legacy compatibility
+        required: true
+    },
+    type: { type: String }, // Legacy field, optional now
     category: { type: String }, // Category ID or Name
     startTime: { type: Date, required: true },
     endTime: { type: Date },

@@ -7,14 +7,8 @@ const TimetableEntrySchema = new mongoose.Schema({
     instructor: { type: String },
     room: { type: String },
     daysOfWeek: [{ type: Number, required: true }], // 1=Monday, 7=Sunday
-    startTime: {
-        hour: { type: Number, required: true },
-        minute: { type: Number, required: true }
-    },
-    endTime: {
-        hour: { type: Number, required: true },
-        minute: { type: Number, required: true }
-    },
+    startTime: { type: String, required: true }, // "HH:mm"
+    endTime: { type: String, required: true },   // "HH:mm"
     semesterStart: { type: Date },
     semesterEnd: { type: Date },
     color: { type: String },
@@ -24,3 +18,4 @@ const TimetableEntrySchema = new mongoose.Schema({
 });
 
 module.exports = mongoose.model('TimetableEntry', TimetableEntrySchema);
+

@@ -1,106 +1,350 @@
-const Task = require('../models/Task');
-const StudySession = require('../models/StudySession');
-const User = require('../models/User');
+const Event = require("../models/Event");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 
-exports.generateStudyPlan = async (req, res) => {
+/* ---------------- HELPER ---------------- */
+const parseDurationToMinutes = (duration) => {
+    if (!duration) return 0;
+    if (duration.includes("h")) return parseInt(duration) * 60;
+    if (duration.includes("m")) return parseInt(duration);
+    return 0; // Default or handle "1h 30m" if needed later
+};
+
+/* =====================================================
+   1️⃣ DAILY WORKLOAD
+   ===================================================== */
+exports.getDailyWorkload = async (req, res) => {
     try {
-        const userId = req.user._id;
-        const user = await User.findById(userId);
+        const userId = req.user._id; // Use req.user._id from auth middleware
+        const queryDate = req.query.date ? new Date(req.query.date) : new Date();
 
-        // 1. Get unfinished tasks with deadlines
-        const tasks = await Task.find({
+        const startOfDay = new Date(queryDate);
+        startOfDay.setHours(0, 0, 0, 0);
+
+        const endOfDay = new Date(queryDate);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        // Fetch all events for the day
+        const allEvents = await Event.find({
             userId,
-            isCompleted: false,
-            deadline: { $exists: true, $ne: null }
-        }).sort({ deadline: 1 }); // Sort by closest deadline
+            startTime: { $lte: endOfDay },
+            endTime: { $gte: startOfDay }
+        });
 
-        if (tasks.length === 0) {
-            return res.json({ message: "No tasks with deadlines found to plan.", sessions: [] });
-        }
+        // Split into Tasks (assignments/exams) and Fixed Events (classes/meetings)
+        const tasks = allEvents.filter(e =>
+            ["assignment", "exam", "submission"].includes(e.classification) || // Added submission
+            (e.classification === 'other' && e.estimatedDuration) // Heuristic
+        );
 
-        // 2. Clear existing separate planned sessions to re-plan?
-        // For MVP, let's assume we just generate new ones or append. 
-        // Let's delete future 'planned' sessions to Avoid duplicates if re-running.
-        await StudySession.deleteMany({ userId, status: 'planned', startTime: { $gt: new Date() } });
+        const fixedEvents = allEvents.filter(e =>
+            ["class", "meeting", "lecture", "lab"].includes(e.classification) // Expanded for root enum
+        );
 
-        const sessions = [];
-        let currentTime = new Date();
-        currentTime.setMinutes(currentTime.getMinutes() + 30); // Start planning from 30 mins from now
+        const totalTaskTime = tasks.reduce(
+            (sum, t) => sum + parseDurationToMinutes(t.estimatedDuration), 0
+        );
 
-        // Simple heuristic: Work between 9am and 9pm? 
-        // Or use user settings?
-        // Let's use user settings or defaults.
-        const sleepStart = parseInt(user.settings?.sleepTimeStart?.split(':')[0] || "23");
-        const sleepEnd = parseInt(user.settings?.sleepTimeEnd?.split(':')[0] || "7");
+        const totalEventTime = fixedEvents.reduce((sum, e) => {
+            // Calculate duration from start/end times
+            const start = e.startTime < startOfDay ? startOfDay : e.startTime;
+            const end = e.endTime > endOfDay ? endOfDay : e.endTime;
+            return sum + (end - start) / 60000;
+        }, 0);
 
-        for (const task of tasks) {
-            let durationNeeded = task.estimatedDuration || 60; // Default 1 hour if not specified
-
-            while (durationNeeded > 0) {
-                // Find next available slot
-                // Simple check: is currentTime inside sleep window?
-                let currentHour = currentTime.getHours();
-                if (currentHour >= sleepStart || currentHour < sleepEnd) {
-                    // Fast forward to wake up time
-                    currentTime.setHours(sleepEnd, 0, 0, 0);
-                    if (currentTime < new Date()) currentTime.setDate(currentTime.getDate() + 1); // Move to next day if needed
-                }
-
-                // Create a session block (e.g., 60 mins or remaining time)
-                let sessionDuration = Math.min(durationNeeded, user.settings?.preferredStudyDuration || 60);
-
-                let sessionEnd = new Date(currentTime);
-                sessionEnd.setMinutes(sessionEnd.getMinutes() + sessionDuration);
-
-                const session = new StudySession({
-                    userId,
-                    relatedTaskId: task._id,
-                    startTime: new Date(currentTime),
-                    endTime: sessionEnd,
-                    status: 'planned',
-                    reasoning: `Deadline is ${new Date(task.deadline).toLocaleDateString()}, highly prioritized.`
-                });
-
-                sessions.push(session);
-                await session.save();
-
-                durationNeeded -= sessionDuration;
-                currentTime = sessionEnd;
-                // Add a small break? 10 mins
-                currentTime.setMinutes(currentTime.getMinutes() + 10);
-            }
-        }
-
-        res.json({ message: "Study plan generated", count: sessions.length, sessions });
+        res.json({
+            date: startOfDay,
+            taskCount: tasks.length,
+            eventCount: fixedEvents.length,
+            totalTaskTime,
+            totalEventTime,
+            totalWorkloadMinutes: totalTaskTime + totalEventTime
+        });
 
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: err.message });
+        res.status(400).json({ message: err.message });
     }
 };
 
-exports.getInsights = async (req, res) => {
-    // Return some basic analytics
+
+/* =====================================================
+   2️⃣ OVERCOMMITMENT CHECK
+   ===================================================== */
+exports.checkOvercommitment = async (req, res) => {
     try {
         const userId = req.user._id;
-        const totalTasks = await Task.countDocuments({ userId });
-        const completedTasks = await Task.countDocuments({ userId, isCompleted: true });
+        const THRESHOLD = 480; // 8 hours
 
-        // Check for missed sessions
-        const missedSessions = await StudySession.countDocuments({
+        const date = req.query.date ? new Date(req.query.date) : new Date();
+        const startOfDay = new Date(date);
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(date);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        const allEvents = await Event.find({
             userId,
-            status: 'planned',
-            endTime: { $lt: new Date() }
+            startTime: { $lte: endOfDay },
+            endTime: { $gte: startOfDay }
         });
 
-        // Simple procrastination detection: delayed tasks?
-        // For now just return counts.
+        const tasks = allEvents.filter(e =>
+            ["assignment", "exam", "submission"].includes(e.classification) ||
+            (e.estimatedDuration && !["class", "meeting", "lecture", "lab"].includes(e.classification))
+        );
+
+        const fixedEvents = allEvents.filter(e =>
+            ["class", "meeting", "lecture", "lab"].includes(e.classification)
+        );
+
+        const totalTaskTime = tasks.reduce(
+            (sum, t) => sum + parseDurationToMinutes(t.estimatedDuration), 0
+        );
+
+        const totalEventTime = fixedEvents.reduce((sum, e) => {
+            const start = e.startTime < startOfDay ? startOfDay : e.startTime;
+            const end = e.endTime > endOfDay ? endOfDay : e.endTime;
+            return sum + (end - start) / 60000;
+        }, 0);
+
+        const totalWorkload = totalTaskTime + totalEventTime;
+
         res.json({
-            totalTasks,
-            completionRate: totalTasks ? (completedTasks / totalTasks) * 100 : 0,
-            missedDeadlineWarnings: missedSessions > 0 ? "You have missed study sessions. Consider rescheduling." : "On track!"
+            totalWorkload,
+            overcommitment: totalWorkload > THRESHOLD,
+            warning: totalWorkload > THRESHOLD ? "⚠️ Too much workload today" : "OK"
         });
+
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        res.status(400).json({ message: err.message });
     }
-}
+};
+
+
+/* =====================================================
+   3️⃣ PROCRASTINATION ANALYSIS
+   ===================================================== */
+exports.analyzeProcrastination = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const now = new Date();
+
+        // Fetch all assignments/exams
+        const tasks = await Event.find({
+            userId,
+            classification: { $in: ["assignment", "exam", "submission"] }
+        });
+
+        if (!tasks.length) return res.json({ message: "No tasks found", procrastinationScore: "0%", warning: "OK" });
+
+        // 1. MISSED DEADLINES (Strongest Indicator)
+        // Tasks that are passed their deadline and NOT completed
+        const missedTasks = tasks.filter(t =>
+            !t.isCompleted && (t.endTime && new Date(t.endTime) < now) // Ensure endTime exists
+        );
+
+        // 2. LATE STAGE INACTION (Behavioral Indicator)
+        // Active tasks where > 80% of the available time has passed, but still incomplete.
+        const lateStartTasks = tasks.filter(t => {
+            if (t.isCompleted) return false;
+
+            const deadline = t.endTime ? new Date(t.endTime) : null;
+            if (!deadline || deadline < now) return false; // No deadline or already missed
+
+            const created = new Date(t.createdAt);
+            const totalTime = deadline - created;
+            const timeElapsed = now - created;
+
+            // If > 80% of time passed and not done -> Procrastinating
+            return totalTime > 0 && (timeElapsed / totalTime) > 0.8;
+        });
+
+        const totalTracked = tasks.length;
+        const badHabitCount = missedTasks.length + lateStartTasks.length;
+
+        // Score: Percentage of tasks showing bad habits
+        const procrastinationScore = totalTracked > 0 ? Math.min(100, ((badHabitCount / totalTracked) * 100)).toFixed(1) : 0;
+
+        let warning = "OK";
+        if (procrastinationScore > 30) warning = "⚠️ Moderate procrastination detected";
+        if (procrastinationScore > 60) warning = "🚨 High procrastination! You are missing deadlines.";
+
+        res.json({
+            totalTasks: totalTracked,
+            missedDeadlines: missedTasks.length,
+            rushingTasks: lateStartTasks.length, // "Danger Zone"
+            procrastinationScore: `${procrastinationScore}%`,
+            warning
+        });
+
+    } catch (err) {
+        res.status(400).json({ message: err.message });
+    }
+};
+
+
+/* =====================================================
+   4️⃣ BURNOUT RISK ANALYSIS
+   ===================================================== */
+exports.analyzeBurnout = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const days = parseInt(req.query.days) || 7;
+        const THRESHOLD = 480; // 8 hours
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        let overloadDays = 0;
+        let totalWorkloadSum = 0;
+
+        for (let i = 0; i < days; i++) {
+            const date = new Date(today);
+            date.setDate(today.getDate() - i);
+
+            const startOfDay = new Date(date);
+            startOfDay.setHours(0, 0, 0, 0);
+            const endOfDay = new Date(date);
+            endOfDay.setHours(23, 59, 59, 999);
+
+            const tasks = await Event.find({
+                userId,
+                // Check for tasks due or working on this day
+                startTime: { $gte: startOfDay, $lte: endOfDay },
+                classification: { $in: ["assignment", "exam", "submission"] }
+            });
+
+            const taskMinutes = tasks.reduce(
+                (sum, t) => sum + parseDurationToMinutes(t.estimatedDuration), 0
+            );
+
+            totalWorkloadSum += taskMinutes;
+            if (taskMinutes > THRESHOLD) overloadDays++;
+        }
+
+        res.json({
+            averageDailyWorkload: (totalWorkloadSum / days).toFixed(1),
+            overloadDays,
+            burnoutRisk: overloadDays >= Math.ceil(days / 2)
+        });
+
+    } catch (err) {
+        res.status(400).json({ message: err.message });
+    }
+};
+
+
+/* =====================================================
+   5️⃣ STUDY SESSION SCHEDULER (AI POWERED)
+   ===================================================== */
+exports.generateStudyPlan = async (req, res) => { // Renamed to suggestStudySessions or generateStudyPlan
+    try {
+        const userId = req.user._id;
+
+        // Check if API key is configured
+        if (!process.env.GEMINI_API_KEY) {
+            return res.status(500).json({
+                message: "Gemini API Key is missing. Please add GEMINI_API_KEY to your .env file."
+            });
+        }
+
+        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // Updated model name if needed, using flash-latest approximation
+
+        const date = req.query.date ? new Date(req.query.date) : new Date();
+        const startOfDay = new Date(date);
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(date);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        // Helper to format date to readable time (IST)
+        const formatTime = (date) => {
+            return new Date(date).toLocaleTimeString("en-IN", {
+                timeZone: "Asia/Kolkata",
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false
+            });
+        };
+
+        // Fetch active tasks (assignments/exams)
+        const tasksRaw = await Event.find({
+            userId,
+            classification: { $in: ["assignment", "exam", "submission"] },
+            isCompleted: false,
+            $or: [
+                { endTime: { $gte: new Date() } }, // Future deadline
+                { endTime: null }
+            ]
+        }).select("title classification priority estimatedDuration endTime");
+
+        const tasks = tasksRaw.map(t => ({
+            title: t.title,
+            priority: t.priority,
+            duration: t.estimatedDuration,
+            deadline: t.endTime ? t.endTime.toDateString() + " " + formatTime(t.endTime) : "None"
+        }));
+
+        // Fetch fixed events (classes/meetings) to identify busy times
+        const fixedEventsRaw = await Event.find({
+            userId,
+            classification: { $in: ["class", "meeting", "lecture", "lab"] },
+            startTime: { $gte: startOfDay, $lte: endOfDay }
+        }).select("title startTime endTime");
+
+        const fixedEvents = fixedEventsRaw.map(e => ({
+            title: e.title,
+            start: formatTime(e.startTime),
+            end: formatTime(e.endTime)
+        }));
+
+        // Construct the prompt for AI
+        const prompt = `
+      You are an intelligent academic planner. Create a daily study plan for a student based on their tasks and fixed schedule.
+      
+      Current Date: ${date.toDateString()}
+      
+      Fixed Events (Users CANNOT study during these times):
+      ${JSON.stringify(fixedEvents)}
+      
+      Pending Tasks (Prioritize based on deadline and priority):
+      ${JSON.stringify(tasks)}
+      
+      Generate a structured schedule for the day (08:00 to 22:00).
+      - IMPORTANT: Do NOT schedule any study sessions during 'Fixed Events'.
+      - Allocate time for fixed events exactly as they are listed.
+      - Fill free gaps with study sessions.
+      - Include short breaks.
+      - If a task has a near deadline, prioritize it.
+      
+      Return the response in strictly valid JSON format with this structure:
+      {
+        "date": "YYYY-MM-DD",
+        "sessions": [
+          { 
+            "task": "Task or Event Name", 
+            "startTime": "HH:mm", 
+            "endTime": "HH:mm", 
+            "type": "study/class/break/other", 
+            "note": "Strategy or focus" 
+          }
+        ],
+        "summary": "Brief summary of the plan"
+      }
+      Do not include any markdown formatting (like \`\`\`json). Just return the raw JSON string.
+    `;
+
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        const text = response.text();
+
+        // Clean up if AI wraps in markdown code blocks
+        const cleanJson = text.replace(/```json/g, '').replace(/```/g, '').trim();
+
+        const studyPlan = JSON.parse(cleanJson);
+
+        res.json(studyPlan);
+
+    } catch (err) {
+        console.error("AI Study Plan Error:", err);
+        res.status(500).json({ message: "Failed to generate study plan", error: err.message });
+    }
+};

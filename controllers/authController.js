@@ -18,7 +18,8 @@ exports.register = async (req, res) => {
         const newUser = new User({ name, email, password: hashedPassword });
         await newUser.save();
 
-        res.status(201).json({ message: "User registered successfully" });
+        const token = jwt.sign({ _id: newUser._id }, process.env.JWT_SECRET);
+        res.status(201).json({ token, user: { id: newUser._id, name: newUser.name, email: newUser.email, role: 'student' } });
     } catch (err) {
         if (err.code === 11000) {
             return res.status(400).json({ message: "Email already exists" });

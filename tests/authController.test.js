@@ -118,4 +118,39 @@ describe('Auth Controller', () => {
             expect(res.json).toHaveBeenCalledWith({ message: "User not found" });
         });
     });
+
+    describe('getMe', () => {
+        it('should return the current user without password', async () => {
+            req.user = { _id: 'userId' };
+
+            const mockUser = {
+                _id: 'userId',
+                name: 'Test User',
+                email: 'test@example.com'
+            };
+
+            // Mock User.findById to return a chainable .select()
+            User.findById.mockReturnValue({
+                select: jest.fn().mockResolvedValue(mockUser)
+            });
+
+            await authController.getMe(req, res);
+
+            expect(User.findById).toHaveBeenCalledWith('userId');
+            expect(res.json).toHaveBeenCalledWith(mockUser);
+        });
+
+        it('should return 500 if database throws an error', async () => {
+            req.user = { _id: 'userId' };
+
+            User.findById.mockReturnValue({
+                select: jest.fn().mockRejectedValue(new Error('DB Error'))
+            });
+
+            await authController.getMe(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(500);
+            expect(res.json).toHaveBeenCalledWith({ error: 'DB Error' });
+        });
+    });
 });

@@ -110,7 +110,9 @@ describe('Events API Integration Tests', () => {
                     startTime: new Date()
                 });
 
+            expect(createRes.statusCode).toEqual(201);
             const eventId = createRes.body._id;
+            expect(eventId).toBeDefined();
 
             const res = await request(app)
                 .delete(`/api/events/${eventId}`)

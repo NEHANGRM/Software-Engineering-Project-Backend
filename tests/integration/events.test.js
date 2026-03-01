@@ -11,8 +11,9 @@ const Event = require('../../models/Event');
 let token;
 
 beforeAll(async () => {
-    if (mongoose.connection.readyState === 0) {
-        await mongoose.connect(process.env.MONGODB_URI);
+    // Wait for mongoose connection initiated by app require to be fully ready
+    if (mongoose.connection.readyState !== 1) {
+        await mongoose.connection.asPromise();
     }
 });
 

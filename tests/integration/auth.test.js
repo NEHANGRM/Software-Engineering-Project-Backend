@@ -9,8 +9,9 @@ beforeAll(async () => {
     // Wait for initial connection to be established via app require
     // If app connection logic is async and not awaited on import, we might need to wait.
     // However, mongoose connection is global. We can just wait for it to be ready.
-    if (mongoose.connection.readyState === 0) {
-        await mongoose.connect(process.env.MONGODB_URI);
+    // Wait for mongoose connection initiated by app require to be fully ready
+    if (mongoose.connection.readyState !== 1) {
+        await mongoose.connection.asPromise();
     }
 });
 

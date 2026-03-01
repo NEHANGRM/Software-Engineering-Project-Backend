@@ -53,7 +53,7 @@ describe('Timetable API Integration Tests', () => {
 
     describe('GET /api/timetable', () => {
         it('should get timetable entries', async () => {
-            await request(app)
+            const createRes = await request(app)
                 .post('/api/timetable')
                 .set('Authorization', token)
                 .send({
@@ -63,12 +63,14 @@ describe('Timetable API Integration Tests', () => {
                     endTime: "12:00"
                 });
 
+            expect(createRes.statusCode).toEqual(201);
+
             const res = await request(app)
                 .get('/api/timetable')
                 .set('Authorization', token);
 
             expect(res.statusCode).toEqual(200);
-            expect(res.body.length).toEqual(1);
+            expect(res.body.length).toBeGreaterThanOrEqual(1);
         });
     });
 

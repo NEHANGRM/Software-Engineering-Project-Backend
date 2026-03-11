@@ -9,7 +9,9 @@ const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // Email transporter
 const transporter = nodemailer.createTransport({
-    service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS,
@@ -99,7 +101,7 @@ exports.login = async (req, res) => {
                 user.mfaOtp = undefined;
                 user.mfaOtpExpiry = undefined;
                 await user.save();
-                return res.status(500).json({ message: "Failed to send MFA verification code. Please try again." });
+                return res.status(500).json({ message: "Failed to send MFA verification code: " + err.message });
             }
         }
 

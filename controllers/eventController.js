@@ -1,4 +1,17 @@
 const Event = require('../models/Event');
+const User = require('../models/User');
+
+const PLANET_RANKS = [
+    'Neptune',
+    'Uranus',
+    'Saturn',
+    'Jupiter',
+    'Mars',
+    'Earth',
+    'Venus',
+    'Mercury',
+    'Sun'
+];
 
 exports.getEvents = async (req, res) => {
     try {
@@ -89,6 +102,89 @@ exports.deleteEvent = async (req, res) => {
         const event = await Event.findOneAndDelete({ _id: req.params.id, userId: req.user._id });
         if (!event) return res.status(404).json({ message: "Event not found" });
         res.json({ message: "Event deleted" });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+exports.markStatus = async (req, res) => {
+    try {
+        const { status } = req.body;
+        const validStatuses = ['upcoming', 'present', 'absent', 'cancelled'];
+        if (!validStatuses.includes(status)) {
+            return res.status(400).json({ message: "Invalid status" });
+        }
+
+        const event = await Event.findOne({ _id: req.params.id, userId: req.user._id });
+        if (!event) return res.status(404).json({ message: "Event not found" });
+
+        const previousStatus = event.attendanceStatus || 'upcoming';
+        if (previousStatus === status) {
+            return res.json({ event, message: "Status unchanged" });
+        }
+
+        const user = await User.findById(req.user._id);
+        if (!user.gamification) {
+            user.gamification = { points: 0, eventsCompleted: 0, rank: 'Neptune' };
+        }
+
+        let pointChange = 0;
+        let eventCountChange = 0;
+
+        // Undo previous status effects
+        if (previousStatus === 'present' && event.classification !== 'class') {
+            pointChange -= 10;
+            eventCountChange -= 1;
+        } else if (previousStatus === 'absent') {
+            pointChange += 5; // give back penalty
+        }
+
+        // Apply new status effects
+        if (status === 'present' && event.classification !== 'class') {
+            pointChange += 10;
+            eventCountChange += 1;
+        } else if (status === 'absent') {
+            pointChange -= 5; // penalty
+        }
+
+        // Apply changes
+        user.gamification.points = Math.max(0, user.gamification.points + pointChange);
+        user.gamification.eventsCompleted = Math.max(0, user.gamification.eventsCompleted + eventCountChange);
+
+        // Calculate rank based on every 10 events completed
+        const rankIndex = Math.min(
+            PLANET_RANKS.length - 1, 
+            Math.floor(user.gamification.eventsCompleted / 10)
+        );
+        const newRank = PLANET_RANKS[rankIndex];
+        
+        const rankChanged = user.gamification.rank !== newRank;
+        const oldRank = user.gamification.rank;
+        user.gamification.rank = newRank;
+
+        // Save
+        event.attendanceStatus = status;
+        if (status === 'present' || status === 'cancelled') {
+            event.isCompleted = true;
+        } else {
+            event.isCompleted = false;
+        }
+
+        await event.save();
+        await user.save();
+
+        res.json({
+            event,
+            user,
+            gamification: {
+                pointChange,
+                totalPoints: user.gamification.points,
+                rankChanged,
+                oldRank,
+                newRank,
+                isPromotion: rankChanged && PLANET_RANKS.indexOf(newRank) > PLANET_RANKS.indexOf(oldRank)
+            }
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

@@ -18,6 +18,11 @@ const UserSchema = new mongoose.Schema({
     resetOtpExpiry: { type: Date },
     mfaOtp: { type: String },
     mfaOtpExpiry: { type: Date },
+    gamification: {
+        points: { type: Number, default: 0 },
+        eventsCompleted: { type: Number, default: 0 },
+        rank: { type: String, default: 'Neptune' }
+    },
     createdAt: { type: Date, default: Date.now }
 });
 

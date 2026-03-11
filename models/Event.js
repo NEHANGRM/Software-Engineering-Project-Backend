@@ -25,6 +25,11 @@ const EventSchema = new mongoose.Schema({
         tags: [String]
     }],
     isCompleted: { type: Boolean, default: false },
+    attendanceStatus: { 
+        type: String, 
+        enum: ['upcoming', 'present', 'absent', 'cancelled'], 
+        default: 'upcoming' 
+    },
     completionColor: { type: String },
     priority: { type: String, default: 'medium' },
     estimatedDuration: { type: String },
